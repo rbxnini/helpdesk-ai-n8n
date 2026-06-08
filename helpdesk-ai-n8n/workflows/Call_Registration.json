@@ -1,0 +1,792 @@
+{
+  "name": "Call Registration",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Envio para API\n",
+        "height": 256,
+        "width": 1552,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -400,
+        16
+      ],
+      "typeVersion": 1,
+      "id": "b7ad4948-188b-4be6-86a9-b988a956fdac",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "authentication": "headerAuth",
+        "requestMethod": "POST",
+        "url": "https://api.assemblyai.com/v2/transcript",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={\n  \"audio_url\": \"{{$json.upload_url}}\",\n  \"language_code\": \"pt\",\n  \"speech_model\": \"universal\",\n  \"punctuate\": true,\n  \"format_text\": true\n}"
+      },
+      "name": "Inicia Transcrição",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        544,
+        128
+      ],
+      "id": "74721848-3010-4ddd-8f80-6aeccc3b68c7",
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "CONFIGURE_CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "headerAuth",
+        "url": "=https://api.assemblyai.com/v2/transcript/{{ $json.id }}",
+        "options": {}
+      },
+      "name": "Checa Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        768,
+        128
+      ],
+      "id": "1aba012c-4dad-4795-9288-f4d5ed762442",
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "CONFIGURE_CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$node[\"Checa Status\"].json[\"status\"]}}",
+              "value2": "completed"
+            }
+          ]
+        }
+      },
+      "name": "Está completo ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        992,
+        80
+      ],
+      "id": "293a9d8a-685b-4f5c-b3af-2194af365884"
+    },
+    {
+      "parameters": {
+        "jsCode": "const words = items[0].json.words;\n\nlet resultado = [];\nlet atualSpeaker = null;\nlet buffer = [];\n\nfor (const w of words) {\n  if (w.speaker !== atualSpeaker) {\n    // Se mudou o falante, salva o texto anterior\n    if (buffer.length > 0) {\n      resultado.push({\n        speaker: atualSpeaker,\n        text: buffer.join(\" \")\n      });\n    }\n    // Reseta para o próximo falante\n    buffer = [w.text];\n    atualSpeaker = w.speaker;\n  } else {\n    buffer.push(w.text);\n  }\n}\n\n// Salva o último bloco\nif (buffer.length > 0) {\n  resultado.push({\n    speaker: atualSpeaker,\n    text: buffer.join(\" \")\n  });\n}\n\nreturn [{ json: { dialogo: resultado } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1216,
+        0
+      ],
+      "id": "4a336062-b3a5-4dee-a585-0dc4fd59c5eb",
+      "name": "Transcrição padrão"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pega o dialogo do primeiro item\nconst first = items[0]?.json ?? {};\nconst dialogo = first.dialogo;\n\nlet allText = \"\";\n\n// Se for array (ex: [{speaker:\"A\", text:\"...\"}])\nif (Array.isArray(dialogo)) {\n  allText = dialogo.map(entry => {\n    if (typeof entry === \"string\") {\n      return entry;\n    }\n    // tenta encontrar o speaker e o texto nas chaves mais comuns\n    const speaker = entry.speaker ?? entry.speakerLabel ?? entry.role ?? \"\";\n    const text = entry.text ?? entry.dialog ?? entry.message ?? \"\";\n    if (speaker && text) return `${speaker}: ${text}`;\n    // fallback: junta qualquer campo de texto disponível\n    if (text) return text;\n    return JSON.stringify(entry);\n  }).join(\"\\n\\n\");\n} else if (typeof dialogo === \"string\") {\n  // já é um bloco de texto\n  allText = dialogo;\n} else if (dialogo && typeof dialogo === \"object\") {\n  // objeto estranho — tenta serializar campos úteis\n  allText = Object.values(dialogo).join(\"\\n\\n\");\n} else {\n  allText = \"\";\n}\n\n// Retorna um único item com o texto combinado\nreturn [\n  {\n    json: {\n      full_text: allText.trim()\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        0
+      ],
+      "id": "25c39320-be68-415b-b73e-7ca3f71f7610",
+      "name": "Simplificação"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Você é um analista de suporte técnico especialista. Sua tarefa é interpretar o diálogo de atendimento recebido e retornar um relatório em Markdown bem estruturado e claro sobre o ocorrido.\n\n⚠️ INSTRUÇÕES IMPORTANTES\n\nLeia o diálogo com atenção.\n\nInterprete o que o cliente queria e o que o analista fez.\n\nNão copie frases irrelevantes, foque apenas no sentido do atendimento.\n\nSeja direto, sem textos longos demais.\n\nSe o caso não tiver solução completa, marque como Pendente ou Sem Solução.\n\nA empresa de suporte se chama [NOME_EMPRESA].\n\nGeralmente o analista se identifica primeiro: “ESL (nome), boa tarde”.\n\nDepois, o cliente se identifica: “Aqui é (nome) da (empresa)”.\n\nIgnore: mensagens automáticas, URA, pesquisas, ruídos, repetições inúteis.\n\nNão começe o texto com aqui está o relatorio nem nada do tipo apenas faça oque está no roteiro.\n\nRoteiro:\n🎯 O QUE DEVE CONTER NO RELATÓRIO (FORMATO OBRIGATÓRIO)\n👤 Identificação\n\nCliente: Nome\n\nEmpresa: Nome\n\n❓ Pergunta do Cliente\n\nResumo objetivo do que o cliente pediu.\n\n💬 Resposta do Suporte\n\nResumo claro da orientação ou ação do analista.\n\n🏁 Status Final\n\nResolvido, Parcial, Pendente ou Sem Solução\n\n📝 Resumo Curto\n\nResumo em uma frase do atendimento.\n\n📌 Resumo Detalhado\n\nExplicação curta (máx. 6 linhas) descrevendo o caso.\n\n🏷️ Tags\n[tag1, tag2, tag3]\n\n📚 Categoria\n\nEx: CTe, NF-e, Financeiro, MDF-e, Usuário, Cadastro, etc.\n\n🔍 CONTEÚDO PARA ANÁLISE\n\nAqui está o diálogo a ser interpretado:\n\n{{ $('Simplificação').item.json.full_text }}\n\n📌 REGRAS FINAIS\n\nNão invente informações extras.\n\nSe a ação não foi concluída, marque como Parcial.\n\nSe o suporte não resolveu ou ficou indefinido, marque como Pendente ou Sem Solução."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        1888,
+        0
+      ],
+      "id": "e3c8eb65-21c8-49b6-a28e-89a50ef47142",
+      "name": "Gerar Markdown",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googlePalmApi": {
+          "name": "CONFIGURE_CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Interpreta e gera Markdown",
+        "height": 256,
+        "width": 1312,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1184,
+        -96
+      ],
+      "typeVersion": 1,
+      "id": "28e21ce9-dd41-4005-883f-93b0ed349144",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "amount": 10
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1216,
+        224
+      ],
+      "id": "8575282e-5ea7-4496-b32c-36ba9f163055",
+      "name": "Wait",
+      "webhookId": "e3f619eb-042e-4a4e-b4cd-5b77b924f3b8"
+    },
+    {
+      "parameters": {
+        "content": "## Gera Ticket e Deleta a ligação",
+        "height": 256,
+        "width": 1520
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2560,
+        -96
+      ],
+      "typeVersion": 1,
+      "id": "20dd501e-c613-43ef-a206-5ddc212b0b64",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 3
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -352,
+        64
+      ],
+      "id": "75ba1b5f-832d-4aa2-bf05-f473006139d3",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Você receberá um texto em markdown.\n\nExtraia APENAS o nome da empresa ou do cliente identificado no texto.\n\nRegras:\n- Retorne somente o nome, em uma única linha\n- Não inclua rótulos, explicações, pontuação ou aspas\n- Não escreva nenhuma palavra além do nome\n- Se não encontrar o nome, retorne exatamente: Não Identificado\n\nTexto:\n{{ $('Transcrição padrão').item.json.dialogo[0].text }}\n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        2240,
+        0
+      ],
+      "id": "e28d72c1-2a7a-4366-9445-5bb6b5afd72c",
+      "name": "Nome da Transportadora",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googlePalmApi": {
+          "name": "CONFIGURE_CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "50364fc2-e003-4e7c-b9fe-a445eca71923",
+              "name": "Company",
+              "value": "={{ $json.content.parts[0].text }}",
+              "type": "string"
+            },
+            {
+              "id": "b43e886d-fad5-42e8-9d2a-e334c22d4ca5",
+              "name": "markdown",
+              "value": "={{ $('Gerar Markdown').item.json.content.parts[0].text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2592,
+        0
+      ],
+      "id": "f23a8305-1584-4ae6-9f49-b4e9f53fd0c9",
+      "name": "Agrupar Dados"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.assemblyai.com/v2/upload",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        320,
+        128
+      ],
+      "id": "cfda9423-3b54-4dba-b9c0-d1a38ec8393a",
+      "name": "Publicar na API",
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "CONFIGURE_CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        96,
+        64
+      ],
+      "id": "7405494c-0e66-41ef-9aeb-cab72d5f74dc",
+      "name": "Filtrar unidade"
+    },
+    {
+      "parameters": {
+        "fileSelector": "{{CALLBOX_FOLDER}}/*.wav",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        -128,
+        64
+      ],
+      "id": "46f8c012-7f26-4309-8efd-f8787baa3e83",
+      "name": "Ler pasta raiz"
+    },
+    {
+      "parameters": {
+        "description": "=Ticket aberto pelo agente de suporte N8N\n\nTransportadora {{ $json.Company }}\n\n{{ $json.markdown }}",
+        "additionalFields": {
+          "customFieldsUi": {
+            "customFieldsValues": [
+              {
+                "id": 22862021797901,
+                "value": "={{ $json['Hora Inicial'] }}"
+              },
+              {
+                "id": 22862084004749,
+                "value": "={{ $json['Hora Final'] }}"
+              },
+              {
+                "id": 22859655580429,
+                "value": "00"
+              },
+              {
+                "id": 16688104877837,
+                "value": "Suporte"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.zendesk",
+      "typeVersion": 1,
+      "position": [
+        3040,
+        -32
+      ],
+      "id": "7173857d-d6bc-4467-b77e-41d19a936e67",
+      "name": "Create a ticket",
+      "credentials": {
+        "zendeskApi": {
+          "name": "CONFIGURE_CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fileName = $('Filtrar unidade').first().json.fileName;\n\n// pega os 3 primeiros blocos separados por \"-\"\nconst [hour, minute, second] = fileName.split('-');\n\nreturn [\n  {\n    json: {\n      fileName,\n      horario_hhmm: `${hour}:${minute}`,\n      horario_com_segundos: `${hour}:${minute}:${second}`\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        0
+      ],
+      "id": "9ddee4c0-142f-484a-bc57-294e78ee1c4f",
+      "name": "Horario"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c3ab5427-03f7-453b-9fb8-156f173780f1",
+              "name": "fileName",
+              "value": "={{ $json.fileName }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        320,
+        -176
+      ],
+      "id": "80cb88e2-9ec8-4994-9fc8-d118c7af3c57",
+      "name": "Setar ID"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "documentId": {
+          "__rl": true,
+          "value": "GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "PLANILHA_EXEMPLO"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Página1"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "ID",
+              "lookupValue": "={{ $json.fileName }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        544,
+        -176
+      ],
+      "id": "d12069f4-0325-4ad1-94cf-c12bc5be07d2",
+      "name": "Buscar ID",
+      "credentials": {
+        "googleApi": {
+          "name": "CONFIGURE_CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2816,
+        -32
+      ],
+      "id": "4e13fb0b-a9c6-472c-8561-b0ef294cafdf",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "id": "={{ $json.id }}"
+      },
+      "type": "n8n-nodes-base.zendesk",
+      "typeVersion": 1,
+      "position": [
+        3264,
+        -32
+      ],
+      "id": "86f25034-14bd-41ec-945b-bced45026cbe",
+      "name": "Get a ticket",
+      "credentials": {
+        "zendeskApi": {
+          "name": "CONFIGURE_CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "id": "={{ $('Get a ticket').item.json.id }}",
+        "updateFields": {
+          "customFieldsUi": {
+            "customFieldsValues": [
+              {
+                "id": 360020894432,
+                "value": "={{ $('Merge').item.json.Analista }}"
+              }
+            ]
+          },
+          "internalNote": "=@@{{ $('Merge').item.json.Analista }},{{ $json.tempo }}"
+        }
+      },
+      "type": "n8n-nodes-base.zendesk",
+      "typeVersion": 1,
+      "position": [
+        3712,
+        -32
+      ],
+      "id": "04c40a2d-7a25-449c-9a80-6479829de122",
+      "name": "Update a ticket",
+      "credentials": {
+        "zendeskApi": {
+          "name": "CONFIGURE_CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const duracao = $('Merge').first().json['Duração'];\n\nconst match = duracao.match(/(\\d+)m(?:\\s*(\\d+)s)?/);\n\nif (!match) {\n  return [{ tempo: \"0,0\" }];\n}\n\nconst minutos = parseInt(match[1]);\nconst segundos = parseInt(match[2] || 0);\n\nreturn [\n  {\n    tempo: `${minutos},${segundos}`\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3488,
+        -32
+      ],
+      "id": "b037b6a9-fcf3-4493-8dc5-213fec2e52ad",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{MOVE_API_ENDPOINT}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3936,
+        -32
+      ],
+      "id": "085721d2-4c7b-4350-b438-d59772700e8e",
+      "name": "Move Call"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Inicia Transcrição": {
+      "main": [
+        [
+          {
+            "node": "Checa Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checa Status": {
+      "main": [
+        [
+          {
+            "node": "Está completo ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Está completo ?": {
+      "main": [
+        [
+          {
+            "node": "Transcrição padrão",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcrição padrão": {
+      "main": [
+        [
+          {
+            "node": "Simplificação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simplificação": {
+      "main": [
+        [
+          {
+            "node": "Horario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar Markdown": {
+      "main": [
+        [
+          {
+            "node": "Nome da Transportadora",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Checa Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Ler pasta raiz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nome da Transportadora": {
+      "main": [
+        [
+          {
+            "node": "Agrupar Dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agrupar Dados": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Publicar na API": {
+      "main": [
+        [
+          {
+            "node": "Inicia Transcrição",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar unidade": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Setar ID",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Publicar na API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler pasta raiz": {
+      "main": [
+        [
+          {
+            "node": "Filtrar unidade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a ticket": {
+      "main": [
+        [
+          {
+            "node": "Get a ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Horario": {
+      "main": [
+        [
+          {
+            "node": "Gerar Markdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Setar ID": {
+      "main": [
+        [
+          {
+            "node": "Buscar ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar ID": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Create a ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a ticket": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a ticket": {
+      "main": [
+        [
+          {
+            "node": "Move Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Update a ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move Call": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "56a3b5a5-ee09-41ac-aee4-3db9dc9e2384",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "id": "3MYXrX5TyDfEe-aFV0Oyw",
+  "tags": []
+}
