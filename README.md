@@ -332,4 +332,5 @@ Ao combinar automação, transcrição de áudio, Inteligência Artificial e int
 
 Abaixo mostro um exemplo concluido de uma ligação analisada, transcrita e adicionada a plataforma de tickets ja direcionado ao cliente contendo todos os dados do atendimento e o tempo que o analista levou para concluir o atendimento.
 
-<img width="1524" height="832" alt="fluxo image" src="https://github.com/user-attachments/assets/10d2a3d2-f8a5-4cfe-9eec-899d51601946" />
+<img width="1524" height="832" alt="fluxo image" src="https://github.com/user-attachments/assets/8caadf97-0b95-4028-91c4-fe8e5dd75d64" />
+
